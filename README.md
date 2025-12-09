@@ -1,34 +1,60 @@
-# 🐶 Bark...but with the ability to use voice cloning on custom audio/text pairs
+# 🐶 BARK AI: but with the ability to use voice cloning on custom audio samples
+
+---
+
+## UPDATE: We launched a follow-up to BARK -- 
+
+_a hyper realistic AI Voice Cloner Desktop App_
+
+- Runs locally
+- All data is yours - 100% data privacy
+- No costs to run
+
+👉 Check it out here: https://github.com/serpapps/ai-voice-cloner
+
+
+---
+
+For RVC `git clone https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI` and train your model or point the code to you model (must clone RVC repo in bark-with-voice-clone directory)
 
 If you want to clone a voice just follow the `clone_voice.ipynb` notebook. If you want to generate audio from text, follow the `generate.ipynb` notebook.
 
-To create a voice clone sample, you need an audio/text pair of less than 7 seconds. (limited testing shows better results with shorter samples (2-4 seconds))
+To create a voice clone sample, you need an audio sample of around 5-12 seconds
 
-Haven't experimented with what kind of audio/text pairs work best, but this will be updated as we find out more.
+You will get the best results by making generations with your cloned voice until you find one that is really close to the source. Then use that as the new history prompt (comes from the model so should theoretically be more consistent)
+
+- [BARK text to speech @ SERP AI](https://serp.ai/tools/bark-text-to-speech-ai-voice-clone-app/)
+
+# Contributors
+
+Huge shoutout & thank you to:
+
+[gitmylo](https://github.com/gitmylo/bark-voice-cloning-HuBERT-quantizer/) 
+for the solution to the semantic token generation for better voice clones and finetunes (HuBERT, etc.)
+
+***
+
+<div style="display: flex; flex-wrap: wrap;">
+  <a href="https://github.com/francislabountyjr" target="_blank" style="margin: 5px; display: inline-block;"><img src="https://avatars.githubusercontent.com/u/73464335?v=4" alt="francislabountyjr" style="border-radius: 50%; width: 75px; height: 75px;"></a>
+  <a href="https://github.com/gkucsko" target="_blank" style="margin: 5px; display: inline-block;"><img src="https://avatars.githubusercontent.com/u/5068315?v=4" alt="gkucsko" style="border-radius: 50%; width: 75px; height: 75px;"></a>
+  <a href="https://github.com/kmfreyberg" target="_blank" style="margin: 5px; display: inline-block;"><img src="https://avatars.githubusercontent.com/u/32879321?v=4" alt="kmfreyberg" style="border-radius: 50%; width: 75px; height: 75px;"></a>
+  <a href="https://github.com/Vaibhavs10" target="_blank" style="margin: 5px; display: inline-block;"><img src="https://avatars.githubusercontent.com/u/18682411?v=4" alt="Vaibhavs10" style="border-radius: 50%; width: 75px; height: 75px;"></a>
+  <a href="https://github.com/devinschumacher" target="_blank" style="margin: 5px; display: inline-block;"><img src="https://avatars.githubusercontent.com/u/45643901?v=4" alt="devinschumacher" style="border-radius: 50%; width: 75px; height: 75px;"></a>
+  <a href="https://github.com/mcamac" target="_blank" style="margin: 5px; display: inline-block;"><img src="https://avatars.githubusercontent.com/u/461009?v=4" alt="mcamac" style="border-radius: 50%; width: 75px; height: 75px;"></a>
+  <a href="https://github.com/fiq" target="_blank" style="margin: 5px; display: inline-block;"><img src="https://avatars.githubusercontent.com/u/236293?v=4" alt="fiq" style="border-radius: 50%; width: 75px; height: 75px;"></a>
+  <a href="https://github.com/zygi" target="_blank" style="margin: 5px; display: inline-block;"><img src="https://avatars.githubusercontent.com/u/2059901?v=4" alt="zygi" style="border-radius: 50%; width: 75px; height: 75px;"></a>
+  <a href="https://github.com/jn-jairo" target="_blank" style="margin: 5px; display: inline-block;"><img src="https://avatars.githubusercontent.com/u/5104869?v=4" alt="jn-jairo" style="border-radius: 50%; width: 75px; height: 75px;"></a>
+  <a href="https://github.com/gitmylo" target="_blank" style="margin: 5px; display: inline-block;"><img src="https://avatars.githubusercontent.com/u/36931363?v=4" alt="gitmylo" style="border-radius: 50%; width: 75px; height: 75px;"></a>
+  <a href="https://github.com/alyxdow" target="_blank" style="margin: 5px; display: inline-block;"><img src="https://avatars.githubusercontent.com/u/84633629?v=4" alt="alyxdow" style="border-radius: 50%; width: 75px; height: 75px;"></a>
+  <a href="https://github.com/mikeyshulman" target="_blank" style="margin: 5px; display: inline-block;"><img src="https://avatars.githubusercontent.com/u/2565833?v=4" alt="mikeyshulman" style="border-radius: 50%; width: 75px; height: 75px;"></a>
+</div>
+
+
 
 
 
 -------------------------------------------------------------------
 # Original README.md
-
-<a href="http://www.repostatus.org/#active"><img src="http://www.repostatus.org/badges/latest/active.svg" /></a>
-[![Twitter](https://img.shields.io/twitter/url/https/twitter.com/OnusFM.svg?style=social&label=@OnusFM)](https://twitter.com/OnusFM)
-[![](https://dcbadge.vercel.app/api/server/J2B2vsjKuE?compact=true&style=flat&)](https://discord.gg/J2B2vsjKuE)
-
-
-[Examples](https://suno-ai.notion.site/Bark-Examples-5edae8b02a604b54a42244ba45ebc2e2) | [Model Card](./model-card.md) | [Playground Waitlist](https://3os84zs17th.typeform.com/suno-studio)
-
-Bark is a transformer-based text-to-audio model created by [Suno](https://suno.ai). Bark can generate highly realistic, multilingual speech as well as other audio - including music, background noise and simple sound effects. The model can also produce nonverbal communications like laughing, sighing and crying. To support the research community, we are providing access to pretrained model checkpoints ready for inference.
-
-<p align="center">
-<img src="https://user-images.githubusercontent.com/5068315/230698495-cbb1ced9-c911-4c9a-941d-a1a4a1286ac6.png" width="500"></img>
-</p>
-
-## 🔊 Demos
-
-[![Open in Spaces](https://img.shields.io/badge/🤗-Open%20In%20Spaces-blue.svg)](https://huggingface.co/spaces/suno/bark)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1eJfA2XUa-mXwdMy7DoYKVYHI1iTd9Vkt?usp=sharing)
-
 ## 🤖 Usage
 
 ```python
@@ -40,7 +66,7 @@ preload_models()
 
 # generate audio from text
 text_prompt = """
-     Hello, my name is Suno. And, uh — and I like pizza. [laughs] 
+     Hello, my name is Serpy. And, uh — and I like pizza. [laughs] 
      But I also have other interests such as playing tic tac toe.
 """
 audio_array = generate_audio(text_prompt)
@@ -138,15 +164,13 @@ Bark has been tested and works on both CPU and GPU (`pytorch 2.0+`, CUDA 11.7 an
 Running Bark requires running >100M parameter transformer models.
 On modern GPUs and PyTorch nightly, Bark can generate audio in roughly realtime. On older GPUs, default colab, or CPU, inference time might be 10-100x slower. 
 
-If you don't have new hardware available or if you want to play with bigger versions of our models, you can also sign up for early access to our model playground [here](https://3os84zs17th.typeform.com/suno-studio).
-
 ## ⚙️ Details
 
 Similar to [Vall-E](https://arxiv.org/abs/2301.02111) and some other amazing work in the field, Bark uses GPT-style 
 models to generate audio from scratch. Different from Vall-E, the initial text prompt is embedded into high-level semantic tokens without the use of phonemes. It can therefore generalize to arbitrary instructions beyond speech that occur in the training data, such as music lyrics, sound effects or other non-speech sounds. A subsequent second model is used to convert the generated semantic tokens into audio codec tokens to generate the full waveform. To enable the community to use Bark via public code we used the fantastic 
 [EnCodec codec](https://github.com/facebookresearch/encodec) from Facebook to act as an audio representation.
 
-Below is a list of some known non-speech sounds, but we are finding more every day. Please let us know if you find patterns that work particularly well on [Discord](https://discord.gg/J2B2vsjKuE)!
+Below is a list of some known non-speech sounds
 
 - `[laughter]`
 - `[laughs]`
@@ -179,37 +203,3 @@ Below is a list of some known non-speech sounds, but we are finding more every d
 | Arabic  | Coming soon! |
 | Bengali | Coming soon! |
 | Telugu | Coming soon! |
-
-## 🙏 Appreciation
-
-- [nanoGPT](https://github.com/karpathy/nanoGPT) for a dead-simple and blazing fast implementation of GPT-style models
-- [EnCodec](https://github.com/facebookresearch/encodec) for a state-of-the-art implementation of a fantastic audio codec
-- [AudioLM](https://github.com/lucidrains/audiolm-pytorch) for very related training and inference code
-- [Vall-E](https://arxiv.org/abs/2301.02111), [AudioLM](https://arxiv.org/abs/2209.03143) and many other ground-breaking papers that enabled the development of Bark
-
-## © License
-
-Bark is licensed under a non-commercial license: CC-BY 4.0 NC. The Suno models themselves may be used commercially. However, this version of Bark uses `EnCodec` as a neural codec backend, which is licensed under a [non-commercial license](https://github.com/facebookresearch/encodec/blob/main/LICENSE).
-
-Please contact us at `bark@suno.ai` if you need access to a larger version of the model and/or a version of the model you can use commercially.  
-
-## 📱 Community
-
-- [Twitter](https://twitter.com/OnusFM)
-- [Discord](https://discord.gg/J2B2vsjKuE)
-
-## 🎧 Suno Studio (Early Access)
-
-We’re developing a playground for our models, including Bark. 
-
-If you are interested, you can sign up for early access [here](https://3os84zs17th.typeform.com/suno-studio).
-
-## FAQ
-
-#### How do I specify where models are downloaded and cached?
-
-Use the `XDG_CACHE_HOME` env variable to override where models are downloaded and cached (otherwise defaults to a subdirectory of `~/.cache`).
-
-#### Bark's generations sometimes differ from my prompts. What's happening?
-
-Bark is a GPT-style model. As such, it may take some creative liberties in its generations, resulting in higher-variance model outputs than traditional text-to-speech approaches.

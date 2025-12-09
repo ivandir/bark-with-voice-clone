@@ -3,7 +3,7 @@ import gc
 import hashlib
 import os
 import re
-import requests
+import json
 
 from encodec import EncodecModel
 import funcy
@@ -14,6 +14,7 @@ import torch
 import torch.nn.functional as F
 import tqdm
 from transformers import BertTokenizer
+from huggingface_hub import hf_hub_download
 
 from .model import GPTConfig, GPT
 from .model_fine import FineGPT, FineGPTConfig
@@ -36,6 +37,9 @@ else:
 global models
 models = {}
 
+global models_devices
+models_devices = {}
+
 
 CONTEXT_WINDOW_SIZE = 1024
 
@@ -57,45 +61,52 @@ CUR_PATH = os.path.dirname(os.path.abspath(__file__))
 
 
 default_cache_dir = os.path.join(os.path.expanduser("~"), ".cache")
-CACHE_DIR = os.path.join(os.getenv("XDG_CACHE_HOME", default_cache_dir), "suno", "bark_v0")
+CACHE_DIR = os.path.join(os.getenv("XDG_CACHE_HOME", default_cache_dir), "serp", "bark_v0")
 
 
-USE_SMALL_MODELS = os.environ.get("SUNO_USE_SMALL_MODELS", False)
+USE_SMALL_MODELS = os.environ.get("SERP_USE_SMALL_MODELS", False)
+GLOBAL_ENABLE_MPS = os.environ.get("SERP_ENABLE_MPS", False)
+OFFLOAD_CPU = os.environ.get("SERP_OFFLOAD_CPU", False)
 
-REMOTE_BASE_URL = "https://dl.suno-models.io/bark/models/v0/"
 
 REMOTE_MODEL_PATHS = {
     "text_small": {
-        "path": os.path.join(REMOTE_BASE_URL, "text.pt"),
+        "repo_id": "suno/bark",
+        "file_name": "text.pt",
         "checksum": "b3e42bcbab23b688355cd44128c4cdd3",
     },
     "coarse_small": {
-        "path": os.path.join(REMOTE_BASE_URL, "coarse.pt"),
+        "repo_id": "suno/bark",
+        "file_name": "coarse.pt",
         "checksum": "5fe964825e3b0321f9d5f3857b89194d",
     },
     "fine_small": {
-        "path": os.path.join(REMOTE_BASE_URL, "fine.pt"),
+        "repo_id": "suno/bark",
+        "file_name": "fine.pt",
         "checksum": "5428d1befe05be2ba32195496e58dc90",
     },
     "text": {
-        "path": os.path.join(REMOTE_BASE_URL, "text_2.pt"),
+        "repo_id": "suno/bark",
+        "file_name": "text_2.pt",
         "checksum": "54afa89d65e318d4f5f80e8e8799026a",
     },
     "coarse": {
-        "path": os.path.join(REMOTE_BASE_URL, "coarse_2.pt"),
+        "repo_id": "suno/bark",
+        "file_name": "coarse_2.pt",
         "checksum": "8a98094e5e3a255a5c9c0ab7efe8fd28",
     },
     "fine": {
-        "path": os.path.join(REMOTE_BASE_URL, "fine_2.pt"),
+        "repo_id": "suno/bark",
+        "file_name": "fine_2.pt",
         "checksum": "59d184ed44e3650774a2f0503a48a97b",
     },
 }
 
 
-if not hasattr(torch.nn.functional, 'scaled_dot_product_attention'):
+if not hasattr(torch.nn.functional, 'scaled_dot_product_attention') and torch.cuda.is_available():
     logger.warning(
-        "torch version does not support flash attention. You will get significantly faster" +
-        " inference speed by upgrade torch to newest version / nightly."
+        "torch version does not support flash attention. You will get faster" +
+        " inference speed by upgrade torch to newest nightly version."
     )
 
 
@@ -113,35 +124,30 @@ def _md5(fname):
     return hash_md5.hexdigest()
 
 
-def _get_ckpt_path(model_type, use_small=False):
+def _get_ckpt_path(model_type, use_small=False, path=None):
     model_key = f"{model_type}_small" if use_small or USE_SMALL_MODELS else model_type
-    model_name = _string_md5(REMOTE_MODEL_PATHS[model_key]["path"])
-    return os.path.join(CACHE_DIR, f"{model_name}.pt")
+    model_name = REMOTE_MODEL_PATHS[model_key]["file_name"]
+    if path is None:
+        path = CACHE_DIR
+    return os.path.join(path, f"{model_name}")
 
 
-S3_BUCKET_PATH_RE = r"s3\:\/\/(.+?)\/"
+def _grab_best_device(use_gpu=True):
+    if torch.cuda.device_count() > 0 and use_gpu:
+        device = "cuda"
+    elif torch.backends.mps.is_available() and use_gpu and GLOBAL_ENABLE_MPS:
+        device = "mps"
+    else:
+        device = "cpu"
+    return device
 
 
-def _parse_s3_filepath(s3_filepath):
-    bucket_name = re.search(S3_BUCKET_PATH_RE, s3_filepath).group(1)
-    rel_s3_filepath = re.sub(S3_BUCKET_PATH_RE, "", s3_filepath)
-    return bucket_name, rel_s3_filepath
-
-
-def _download(from_s3_path, to_local_path):
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    response = requests.get(from_s3_path, stream=True)
-    total_size_in_bytes = int(response.headers.get("content-length", 0))
-    block_size = 1024
-    progress_bar = tqdm.tqdm(total=total_size_in_bytes, unit="iB", unit_scale=True)
-    with open(to_local_path, "wb") as file:
-        for data in response.iter_content(block_size):
-            progress_bar.update(len(data))
-            file.write(data)
-    progress_bar.close()
-    if total_size_in_bytes != 0 and progress_bar.n != total_size_in_bytes:
-        raise ValueError("ERROR, something went wrong")
-
+def _download(from_hf_path, file_name, to_local_path):
+    to_local_path = to_local_path.replace("\\", "/")
+    path = '/'.join(to_local_path.split("/")[:-1])
+    os.makedirs(path, exist_ok=True)
+    hf_hub_download(repo_id=from_hf_path, filename=file_name, local_dir=path)
+    os.replace(os.path.join(path, file_name), to_local_path)
 
 class InferenceContext:
     def __init__(self, benchmark=False):
@@ -185,8 +191,6 @@ def clean_models(model_key=None):
 
 
 def _load_model(ckpt_path, device, use_small=False, model_type="text"):
-    if "cuda" not in device:
-        logger.warning("No GPU being used. Careful, inference might be extremely slow!")
     if model_type == "text":
         ConfigClass = GPTConfig
         ModelClass = GPT
@@ -200,42 +204,81 @@ def _load_model(ckpt_path, device, use_small=False, model_type="text"):
         raise NotImplementedError()
     model_key = f"{model_type}_small" if use_small or USE_SMALL_MODELS else model_type
     model_info = REMOTE_MODEL_PATHS[model_key]
-    if (
-        os.path.exists(ckpt_path) and
-        _md5(ckpt_path) != model_info["checksum"]
-    ):
-        logger.warning(f"found outdated {model_type} model, removing.")
-        os.remove(ckpt_path)
+    # if (
+    #     os.path.exists(ckpt_path) and
+    #     _md5(ckpt_path) != model_info["checksum"]
+    # ):
+    #     logger.warning(f"found outdated {model_type} model, removing.")
+    #     os.remove(ckpt_path)
     if not os.path.exists(ckpt_path):
         logger.info(f"{model_type} model not found, downloading into `{CACHE_DIR}`.")
-        _download(model_info["path"], ckpt_path)
+        _download(model_info["repo_id"], model_info["file_name"], ckpt_path)
     checkpoint = torch.load(ckpt_path, map_location=device)
     # this is a hack
-    model_args = checkpoint["model_args"]
+    # check if config.json is in the same directory as the checkpoint
+    # if so, load it
+    # otherwise, assume it's in the checkpoint
+    config_path = os.path.join(os.path.dirname(ckpt_path), "config.json")
+    if os.path.exists(config_path):
+        with open(config_path, "r") as f:
+            model_args = json.load(f)
+    else:
+        model_args = checkpoint["model_args"]
     if "input_vocab_size" not in model_args:
         model_args["input_vocab_size"] = model_args["vocab_size"]
         model_args["output_vocab_size"] = model_args["vocab_size"]
         del model_args["vocab_size"]
-    gptconf = ConfigClass(**checkpoint["model_args"])
+    gptconf = ConfigClass(**model_args)
     model = ModelClass(gptconf)
-    state_dict = checkpoint["model"]
+    if checkpoint.get("model", None) is not None:
+        state_dict = checkpoint["model"]
+    else:
+        state_dict = checkpoint
     # fixup checkpoint
     unwanted_prefix = "_orig_mod."
     for k, v in list(state_dict.items()):
         if k.startswith(unwanted_prefix):
             state_dict[k[len(unwanted_prefix) :]] = state_dict.pop(k)
+    unwanted_suffixes = [
+        "lora_right_weight",
+        "lora_left_weight",
+        "lora_right_bias",
+        "lora_left_bias",
+    ]
+    for k, v in list(state_dict.items()):
+        for suffix in unwanted_suffixes:
+            if k.endswith(suffix):
+                state_dict.pop(k)
+    # super hacky - should probably refactor this
+    if state_dict.get('lm_head.0.weight', None) is not None:
+        state_dict['lm_head.weight'] = state_dict.pop('lm_head.0.weight')
+    if state_dict.get('lm_heads.0.0.weight', None) is not None:
+        state_dict['lm_heads.0.weight'] = state_dict.pop('lm_heads.0.0.weight')
+    if state_dict.get('lm_heads.1.0.weight', None) is not None:
+        state_dict['lm_heads.1.weight'] = state_dict.pop('lm_heads.1.0.weight')
+    if state_dict.get('lm_heads.2.0.weight', None) is not None:
+        state_dict['lm_heads.2.weight'] = state_dict.pop('lm_heads.2.0.weight')
+    if state_dict.get('lm_heads.3.0.weight', None) is not None:
+        state_dict['lm_heads.3.weight'] = state_dict.pop('lm_heads.3.0.weight')
+    if state_dict.get('lm_heads.4.0.weight', None) is not None:
+        state_dict['lm_heads.4.weight'] = state_dict.pop('lm_heads.4.0.weight')
+    if state_dict.get('lm_heads.5.0.weight', None) is not None:
+        state_dict['lm_heads.5.weight'] = state_dict.pop('lm_heads.5.0.weight')
+    if state_dict.get('lm_heads.6.0.weight', None) is not None:
+        state_dict['lm_heads.6.weight'] = state_dict.pop('lm_heads.6.0.weight')
     extra_keys = set(state_dict.keys()) - set(model.state_dict().keys())
     extra_keys = set([k for k in extra_keys if not k.endswith(".attn.bias")])
     missing_keys = set(model.state_dict().keys()) - set(state_dict.keys())
     missing_keys = set([k for k in missing_keys if not k.endswith(".attn.bias")])
     if len(extra_keys) != 0:
-        raise ValueError(f"extra keys found: {extra_keys}")
+        print(f"extra keys found: {extra_keys}")
     if len(missing_keys) != 0:
         raise ValueError(f"missing keys: {missing_keys}")
     model.load_state_dict(state_dict, strict=False)
     n_params = model.get_num_params()
-    val_loss = checkpoint["best_val_loss"].item()
-    logger.info(f"model loaded: {round(n_params/1e6,1)}M params, {round(val_loss,3)} loss")
+    if checkpoint.get("best_val_loss", None) is not None:
+        val_loss = checkpoint["best_val_loss"].item()
+        logger.info(f"model loaded: {round(n_params/1e6,1)}M params, {round(val_loss,3)} loss")
     model.eval()
     model.to(device)
     del checkpoint, state_dict
@@ -258,59 +301,82 @@ def _load_codec_model(device):
     return model
 
 
-def load_model(use_gpu=True, use_small=False, force_reload=False, model_type="text"):
+def load_model(use_gpu=True, use_small=False, force_reload=False, model_type="text", path=None):
     _load_model_f = funcy.partial(_load_model, model_type=model_type, use_small=use_small)
     if model_type not in ("text", "coarse", "fine"):
         raise NotImplementedError()
     global models
-    if torch.cuda.device_count() == 0 or not use_gpu:
+    global models_devices
+    device = _grab_best_device(use_gpu=use_gpu)
+    model_key = f"{model_type}"
+    if OFFLOAD_CPU:
+        models_devices[model_key] = device
         device = "cpu"
-    else:
-        device = "cuda"
-    model_key = str(device) + f"__{model_type}"
     if model_key not in models or force_reload:
-        ckpt_path = _get_ckpt_path(model_type, use_small=use_small)
-        clean_models(model_key=model_key)
+        if path.endswith(".ckpt") or path.endswith(".pt") or path.endswith(".bin"):
+            ckpt_path = path
+        else:
+            ckpt_path = _get_ckpt_path(model_type, use_small=use_small, path=path)
+        # clean_models(model_key=model_key)
         model = _load_model_f(ckpt_path, device)
         models[model_key] = model
+    if model_type == "text":
+        models[model_key]["model"].to(device)
+    else:
+        models[model_key].to(device)
     return models[model_key]
 
 
 def load_codec_model(use_gpu=True, force_reload=False):
     global models
-    if torch.cuda.device_count() == 0 or not use_gpu:
+    global models_devices
+    device = _grab_best_device(use_gpu=use_gpu)
+    if device == "mps":
+        # encodec doesn't support mps
         device = "cpu"
-    else:
-        device = "cuda"
-    model_key = str(device) + f"__codec"
+    model_key = "codec"
+    if OFFLOAD_CPU:
+        models_devices[model_key] = device
+        device = "cpu"
     if model_key not in models or force_reload:
         clean_models(model_key=model_key)
         model = _load_codec_model(device)
         models[model_key] = model
+    models[model_key].to(device)
     return models[model_key]
 
 
 def preload_models(
     text_use_gpu=True,
     text_use_small=False,
+    text_model_path=None,
     coarse_use_gpu=True,
     coarse_use_small=False,
+    coarse_model_path=None,
     fine_use_gpu=True,
     fine_use_small=False,
+    fine_model_path=None,
     codec_use_gpu=True,
     force_reload=False,
+    path=None,
 ):
+    """Load all the necessary models for the pipeline."""
+    if _grab_best_device() == "cpu" and (
+        text_use_gpu or coarse_use_gpu or fine_use_gpu or codec_use_gpu
+    ):
+        logger.warning("No GPU being used. Careful, inference might be very slow!")
     _ = load_model(
-        model_type="text", use_gpu=text_use_gpu, use_small=text_use_small, force_reload=force_reload
+        model_type="text", use_gpu=text_use_gpu, use_small=text_use_small, force_reload=force_reload, path=path if text_model_path is None else text_model_path
     )
     _ = load_model(
         model_type="coarse",
         use_gpu=coarse_use_gpu,
         use_small=coarse_use_small,
         force_reload=force_reload,
+        path=path if coarse_model_path is None else coarse_model_path,
     )
     _ = load_model(
-        model_type="fine", use_gpu=fine_use_gpu, use_small=fine_use_small, force_reload=force_reload
+        model_type="fine", use_gpu=fine_use_gpu, use_small=fine_use_small, force_reload=force_reload, path=path if fine_model_path is None else fine_model_path
     )
     _ = load_codec_model(use_gpu=codec_use_gpu, force_reload=force_reload)
 
@@ -318,7 +384,6 @@ def preload_models(
 ####
 # Generation Functionality
 ####
-
 
 def _tokenize(tokenizer, text):
     return tokenizer.encode(text, add_special_tokens=False)
@@ -330,7 +395,6 @@ def _detokenize(tokenizer, enc_text):
 
 def _normalize_whitespace(text):
     return re.sub(r"\s+", " ", text).strip()
-
 
 TEXT_ENCODING_OFFSET = 10_048
 SEMANTIC_PAD_TOKEN = 10_000
@@ -344,13 +408,11 @@ def generate_text_semantic(
     temp=0.7,
     top_k=None,
     top_p=None,
-    use_gpu=True,
     silent=False,
     min_eos_p=0.2,
     max_gen_duration_s=None,
     allow_early_stop=True,
-    model=None,
-    use_kv_caching=False
+    use_kv_caching=False,
 ):
     """Generate semantic tokens from text."""
     assert isinstance(text, str)
@@ -358,7 +420,10 @@ def generate_text_semantic(
     assert len(text.strip()) > 0
     if history_prompt is not None:
         if history_prompt.endswith(".npz"):
-            semantic_history = np.load(history_prompt)["semantic_prompt"]
+            try:
+                semantic_history = np.load(history_prompt)["semantic_prompt"]
+            except:
+                semantic_history = np.load(history_prompt)["semantic"]
         else:
             semantic_history = np.load(
                 os.path.join(CUR_PATH, "assets", "prompts", f"{history_prompt}.npz")
@@ -372,12 +437,18 @@ def generate_text_semantic(
         )
     else:
         semantic_history = None
-    model_container = load_model(use_gpu=use_gpu, model_type="text")
-    if model is None:
-        model = model_container["model"]
+    # load models if not yet exist
+    global models
+    global models_devices
+    if "text" not in models:
+        preload_models()
+    model_container = models["text"]
+    model = model_container["model"]
     tokenizer = model_container["tokenizer"]
     encoded_text = np.array(_tokenize(tokenizer, text)) + TEXT_ENCODING_OFFSET
-    device = "cuda" if use_gpu and torch.cuda.device_count() > 0 else "cpu"
+    if OFFLOAD_CPU:
+        model.to(models_devices["text"])
+    device = next(model.parameters()).device
     if len(encoded_text) > 256:
         p = round((len(encoded_text) - 256) / len(encoded_text) * 100, 1)
         logger.warning(f"warning, text too long, lopping of last {p}%")
@@ -401,7 +472,9 @@ def generate_text_semantic(
     else:
         semantic_history = np.array([SEMANTIC_PAD_TOKEN] * 256)
     x = torch.from_numpy(
-        np.hstack([encoded_text, semantic_history, np.array([SEMANTIC_INFER_TOKEN])]).astype(np.int64)
+        np.hstack([
+            encoded_text, semantic_history, np.array([SEMANTIC_INFER_TOKEN])
+        ]).astype(np.int64)
     )[None]
     assert x.shape[1] == 256 + 256 + 1
     with _inference_mode():
@@ -417,8 +490,9 @@ def generate_text_semantic(
                 x_input = x[:, [-1]]
             else:
                 x_input = x
-
-            logits, kv_cache = model(x_input, merge_context=True, use_cache=use_kv_caching, past_kv=kv_cache)
+            logits, kv_cache = model(
+                x_input, merge_context=True, use_cache=use_kv_caching, past_kv=kv_cache
+            )
             relevant_logits = logits[0, 0, :SEMANTIC_VOCAB_SIZE]
             if allow_early_stop:
                 relevant_logits = torch.hstack(
@@ -426,8 +500,7 @@ def generate_text_semantic(
                 )
             if top_p is not None:
                 # faster to convert to numpy
-                logits_device = relevant_logits.device
-                logits_dtype = relevant_logits.type()
+                original_device = relevant_logits.device
                 relevant_logits = relevant_logits.detach().cpu().type(torch.float32).numpy()
                 sorted_indices = np.argsort(relevant_logits)[::-1]
                 sorted_logits = relevant_logits[sorted_indices]
@@ -437,12 +510,18 @@ def generate_text_semantic(
                 sorted_indices_to_remove[0] = False
                 relevant_logits[sorted_indices[sorted_indices_to_remove]] = -np.inf
                 relevant_logits = torch.from_numpy(relevant_logits)
-                relevant_logits = relevant_logits.to(logits_device).type(logits_dtype)
+                relevant_logits = relevant_logits.to(original_device)
             if top_k is not None:
                 v, _ = torch.topk(relevant_logits, min(top_k, relevant_logits.size(-1)))
                 relevant_logits[relevant_logits < v[-1]] = -float("Inf")
             probs = F.softmax(relevant_logits / temp, dim=-1)
+            # multinomial bugged on mps: shuttle to cpu if necessary
+            inf_device = probs.device
+            if probs.device.type == "mps":
+                probs = probs.to("cpu")
             item_next = torch.multinomial(probs, num_samples=1)
+            probs = probs.to(inf_device)
+            item_next = item_next.to(inf_device)
             if allow_early_stop and (
                 item_next == SEMANTIC_VOCAB_SIZE
                 or (min_eos_p is not None and probs[-1] >= min_eos_p)
@@ -465,6 +544,8 @@ def generate_text_semantic(
             pbar_state = req_pbar_state
         pbar.close()
         out = x.detach().cpu().numpy().squeeze()[256 + 256 + 1 :]
+    if OFFLOAD_CPU:
+        model.to("cpu")
     assert all(0 <= out) and all(out < SEMANTIC_VOCAB_SIZE)
     _clear_cuda_cache()
     return out
@@ -490,12 +571,10 @@ def generate_coarse(
     temp=0.7,
     top_k=None,
     top_p=None,
-    use_gpu=True,
     silent=False,
     max_coarse_history=630,  # min 60 (faster), max 630 (more context)
     sliding_window_len=60,
-    model=None,
-    use_kv_caching=False
+    use_kv_caching=False,
 ):
     """Generate coarse audio codes from semantic tokens."""
     assert (
@@ -516,8 +595,12 @@ def generate_coarse(
             x_history = np.load(
                 os.path.join(CUR_PATH, "assets", "prompts", f"{history_prompt}.npz")
             )
-        x_semantic_history = x_history["semantic_prompt"]
-        x_coarse_history = x_history["coarse_prompt"]
+        try:
+            x_semantic_history = x_history["semantic_prompt"]
+            x_coarse_history = x_history["coarse_prompt"]
+        except:
+            x_semantic_history = x_history["semantic"]
+            x_coarse_history = x_history["coarse"]
         assert (
             isinstance(x_semantic_history, np.ndarray)
             and len(x_semantic_history.shape) == 1
@@ -552,9 +635,15 @@ def generate_coarse(
     else:
         x_semantic_history = np.array([], dtype=np.int32)
         x_coarse_history = np.array([], dtype=np.int32)
-    if model is None:
-        model = load_model(use_gpu=use_gpu, model_type="coarse")
-    device = "cuda" if use_gpu and torch.cuda.device_count() > 0 else "cpu"
+    # load models if not yet exist
+    global models
+    global models_devices
+    if "coarse" not in models:
+        preload_models()
+    model = models["coarse"]
+    if OFFLOAD_CPU:
+        model.to(models_devices["coarse"])
+    device = next(model.parameters()).device
     # start loop
     n_steps = int(
         round(
@@ -610,8 +699,7 @@ def generate_coarse(
                 relevant_logits = logits[0, 0, logit_start_idx:logit_end_idx]
                 if top_p is not None:
                     # faster to convert to numpy
-                    logits_device = relevant_logits.device
-                    logits_dtype = relevant_logits.type()
+                    original_device = relevant_logits.device
                     relevant_logits = relevant_logits.detach().cpu().type(torch.float32).numpy()
                     sorted_indices = np.argsort(relevant_logits)[::-1]
                     sorted_logits = relevant_logits[sorted_indices]
@@ -621,12 +709,18 @@ def generate_coarse(
                     sorted_indices_to_remove[0] = False
                     relevant_logits[sorted_indices[sorted_indices_to_remove]] = -np.inf
                     relevant_logits = torch.from_numpy(relevant_logits)
-                    relevant_logits = relevant_logits.to(logits_device).type(logits_dtype)
+                    relevant_logits = relevant_logits.to(original_device)
                 if top_k is not None:
                     v, _ = torch.topk(relevant_logits, min(top_k, relevant_logits.size(-1)))
                     relevant_logits[relevant_logits < v[-1]] = -float("Inf")
                 probs = F.softmax(relevant_logits / temp, dim=-1)
+                # multinomial bugged on mps: shuttle to cpu if necessary
+                inf_device = probs.device
+                if probs.device.type == "mps":
+                    probs = probs.to("cpu")
                 item_next = torch.multinomial(probs, num_samples=1)
+                probs = probs.to(inf_device)
+                item_next = item_next.to(inf_device)
                 item_next += logit_start_idx
                 x_coarse_in = torch.cat((x_coarse_in, item_next[None]), dim=1)
                 x_in = torch.cat((x_in, item_next[None]), dim=1)
@@ -634,6 +728,8 @@ def generate_coarse(
                 n_step += 1
             del x_in
         del x_semantic_in
+    if OFFLOAD_CPU:
+        model.to("cpu")
     gen_coarse_arr = x_coarse_in.detach().cpu().numpy().squeeze()[len(x_coarse_history) :]
     del x_coarse_in
     assert len(gen_coarse_arr) == n_steps
@@ -648,9 +744,7 @@ def generate_fine(
     x_coarse_gen,
     history_prompt=None,
     temp=0.5,
-    use_gpu=True,
     silent=True,
-    model=None,
 ):
     """Generate full audio codes from coarse audio codes."""
     assert (
@@ -663,7 +757,10 @@ def generate_fine(
     )
     if history_prompt is not None:
         if history_prompt.endswith(".npz"):
-            x_fine_history = np.load(history_prompt)["fine_prompt"]
+            try:
+                x_fine_history = np.load(history_prompt)["fine_prompt"]
+            except:
+                x_fine_history = np.load(history_prompt)["fine"]
         else:
             x_fine_history = np.load(
                 os.path.join(CUR_PATH, "assets", "prompts", f"{history_prompt}.npz")
@@ -679,9 +776,15 @@ def generate_fine(
     else:
         x_fine_history = None
     n_coarse = x_coarse_gen.shape[0]
-    if model is None:
-        model = load_model(use_gpu=use_gpu, model_type="fine")
-    device = "cuda" if use_gpu and torch.cuda.device_count() > 0 else "cpu"
+    # load models if not yet exist
+    global models
+    global models_devices
+    if "fine" not in models:
+        preload_models()
+    model = models["fine"]
+    if OFFLOAD_CPU:
+        model.to(models_devices["fine"])
+    device = next(model.parameters()).device
     # make input arr
     in_arr = np.vstack(
         [
@@ -729,10 +832,14 @@ def generate_fine(
                 else:
                     relevant_logits = logits[0, :, :CODEBOOK_SIZE] / temp
                     probs = F.softmax(relevant_logits, dim=-1)
+                    # multinomial bugged on mps: shuttle to cpu if necessary
+                    inf_device = probs.device
+                    if probs.device.type == "mps":
+                        probs = probs.to("cpu")
                     codebook_preds = torch.hstack(
                         [
-                            torch.multinomial(probs[n], num_samples=1)
-                            for n in range(rel_start_fill_idx, 1024)
+                            torch.multinomial(probs[nnn], num_samples=1).to(inf_device)
+                            for nnn in range(rel_start_fill_idx, 1024)
                         ]
                     )
                 in_buffer[0, rel_start_fill_idx:, nn] = codebook_preds
@@ -745,6 +852,8 @@ def generate_fine(
             del in_buffer
         gen_fine_arr = in_arr.detach().cpu().numpy().squeeze().T
         del in_arr
+    if OFFLOAD_CPU:
+        model.to("cpu")
     gen_fine_arr = gen_fine_arr[:, n_history:]
     if n_remove_from_end > 0:
         gen_fine_arr = gen_fine_arr[:, :-n_remove_from_end]
@@ -753,11 +862,17 @@ def generate_fine(
     return gen_fine_arr
 
 
-def codec_decode(fine_tokens, model=None, use_gpu=True):
+def codec_decode(fine_tokens):
     """Turn quantized audio codes into audio array using encodec."""
-    if model is None:
-        model = load_codec_model(use_gpu=use_gpu)
-    device = "cuda" if use_gpu and torch.cuda.device_count() > 0 else "cpu"
+    # load models if not yet exist
+    global models
+    global models_devices
+    if "codec" not in models:
+        preload_models()
+    model = models["codec"]
+    if OFFLOAD_CPU:
+        model.to(models_devices["codec"])
+    device = next(model.parameters()).device
     arr = torch.from_numpy(fine_tokens)[None]
     arr = arr.to(device)
     arr = arr.transpose(0, 1)
@@ -765,4 +880,6 @@ def codec_decode(fine_tokens, model=None, use_gpu=True):
     out = model.decoder(emb)
     audio_arr = out.detach().cpu().numpy().squeeze()
     del arr, emb, out
+    if OFFLOAD_CPU:
+        model.to("cpu")
     return audio_arr
